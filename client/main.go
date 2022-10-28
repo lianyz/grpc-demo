@@ -38,6 +38,7 @@ func main() {
 		log.Fatalf("did not connect: %v", err)
 	}
 	defer conn.Close()
+
 	client := pb.NewProductInfoClient(conn)
 
 	if len(os.Args) < 4 {
@@ -129,4 +130,48 @@ func main() {
 		log.Fatalf("CloseAndRecv failed %v", err)
 	}
 	log.Printf("Update Orders Res: %s", updateRes)
+
+	// Process Order
+	log.Printf("************************")
+	streamProcOrder, err := streamClient.ProcessOrders(ctx)
+	if err != nil {
+		log.Fatalf("%v.ProcessOrders(_) = _, %v", streamClient, err)
+	}
+
+	if err := streamProcOrder.Send(&pb.ProcessOrdersRequest{OrderId: "102"}); err != nil {
+		log.Fatalf("%v.Send(%v) = %v", streamClient, "102", err)
+	}
+
+	if err := streamProcOrder.Send(&pb.ProcessOrdersRequest{OrderId: "103"}); err != nil {
+		log.Fatalf("%v.Send(%v) = %v", streamClient, "103", err)
+	}
+
+	if err := streamProcOrder.Send(&pb.ProcessOrdersRequest{OrderId: "104"}); err != nil {
+		log.Fatalf("%v.Send(%v) = %v", streamClient, "104", err)
+	}
+
+	c := make(chan int)
+	go asyncClientBidirectionalRPC(streamProcOrder, c)
+	time.Sleep(time.Millisecond * 100)
+
+	if err := streamProcOrder.Send(&pb.ProcessOrdersRequest{OrderId: "105"}); err != nil {
+		log.Fatalf("%v.Send(%v) = %v", streamClient, "105", err)
+	}
+
+	if err := streamProcOrder.CloseSend(); err != nil {
+		log.Fatal(err)
+	}
+
+	c <- 1
+}
+
+func asyncClientBidirectionalRPC(streamProcOrder pb.OrderManagement_ProcessOrdersClient, c chan int) {
+	for {
+		combinedShipment, err := streamProcOrder.Recv()
+		if err != io.EOF {
+			break
+		}
+		log.Printf("Combined shipment : %v", combinedShipment.Orders)
+	}
+	<-c
 }

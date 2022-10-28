@@ -23,6 +23,10 @@ type service struct {
 	orders   map[string]*pb.Order
 }
 
+const (
+	orderBatchSize = 3
+)
+
 func (s *service) AddProduct(ctx context.Context, req *pb.AddProductRequest) (*pb.AddProductResponse, error) {
 	log.Printf("add product %v", req)
 
@@ -99,6 +103,12 @@ func (s *service) initOrders() {
 		Destination: "client3",
 		Items:       initItems("Google", "Apple", "Yahoo"),
 	}
+
+	s.orders["102"] = &pb.Order{Id: "102", Items: []string{"Google Pixel 3A", "Mac Book Pro"}, Destination: "Mountain View, CA", Price: 1800.00}
+	s.orders["103"] = &pb.Order{Id: "103", Items: []string{"Apple Watch S4"}, Destination: "San Jose, CA", Price: 400.00}
+	s.orders["104"] = &pb.Order{Id: "104", Items: []string{"Google Home Mini", "Google Nest Hub"}, Destination: "Mountain View, CA", Price: 400.00}
+	s.orders["105"] = &pb.Order{Id: "105", Items: []string{"Amazon Echo"}, Destination: "San Jose, CA", Price: 30.00}
+	s.orders["101"] = &pb.Order{Id: "101", Items: []string{"Amazon Echo", "Apple iPhone XS"}, Destination: "Mountain View, CA", Price: 300.00}
 }
 
 func (s *service) SearchOrders(req *pb.SearchOrdersRequest, stream pb.OrderManagement_SearchOrdersServer) error {
@@ -141,4 +151,63 @@ func (s *service) UpdateOrders(stream pb.OrderManagement_UpdateOrdersServer) err
 
 	}
 	return nil
+}
+
+func (s *service) ProcessOrders(stream pb.OrderManagement_ProcessOrdersServer) error {
+	if s.orders == nil {
+		s.initOrders()
+	}
+
+	log.Printf("***************\r\n\r\n\r\n")
+
+	batchMarker := 1
+	var combinedShipments = make(map[string]pb.CombinedShipment)
+	for {
+		orderInfo, err := stream.Recv()
+		log.Printf("Reading Proc order: %s", orderInfo.GetOrderId())
+		if err == io.EOF {
+			for _, shipment := range combinedShipments {
+				if err := stream.Send(&shipment); err != nil {
+					return err
+				}
+				return nil
+			}
+		} else if err != nil {
+			log.Printf("stream recv err: %v", err)
+			return err
+		}
+
+		log.Printf("Debug: %v", orderInfo.GetOrderId())
+		destination := s.orders[orderInfo.GetOrderId()].Destination
+		shipment, found := combinedShipments[destination]
+
+		if found {
+			order := s.orders[orderInfo.GetOrderId()]
+			shipment.Orders = append(shipment.Orders, order)
+			combinedShipments[destination] = shipment
+		} else {
+			combinedShipment := pb.CombinedShipment{
+				Id:     "cmb - " + (s.orders[orderInfo.GetOrderId()].Destination),
+				Status: "Processed!",
+			}
+			order := s.orders[orderInfo.GetOrderId()]
+			combinedShipment.Orders = append(combinedShipment.Orders, order)
+			combinedShipments[destination] = combinedShipment
+			log.Print(len(combinedShipment.Orders), combinedShipment.GetId())
+		}
+
+		if batchMarker == orderBatchSize {
+			for _, comb := range combinedShipments {
+				log.Printf("Shipping: %v -> %v", comb.Id, len(comb.Orders))
+				if err := stream.Send(&comb); err != nil {
+					return err
+				}
+			}
+
+			batchMarker = 0
+			combinedShipments = make(map[string]pb.CombinedShipment)
+		} else {
+			batchMarker++
+		}
+	}
 }

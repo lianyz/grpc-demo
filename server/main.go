@@ -29,7 +29,7 @@ func main() {
 	pb.RegisterProductInfoServer(rpcServer, &service{})
 	pb.RegisterOrderManagementServer(rpcServer, &service{})
 
-	log.Printf("Sttarting gRPC listener on port " + port)
+	log.Printf("Starting gRPC listener on port " + port)
 	if err := rpcServer.Serve(listener); err != nil {
 		log.Fatalf("failed tot serve: %v", err)
 	}
